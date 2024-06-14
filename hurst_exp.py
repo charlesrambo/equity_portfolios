@@ -44,7 +44,9 @@ def ks_test(y, dist_fun, q = 1, sigma_vals = [1, 3]):
     # Get N
     N = len(y)
     
-    warnings.warn(f'Using a KS-statistic is ineffective for N less than 120. Got N = {N}.')
+    if N < 120:
+        
+        warnings.warn(f'The KS-method is ineffective for N less than 120. Got N = {N}.')
     
     # Sample more values for small tau
     tau_vals = np.array([int(2**i) for i in range(int(np.log2(N)) - 2)])
@@ -204,56 +206,43 @@ if __name__ == '__main__':
     import time   
     
     start_time = time.perf_counter()
-    
+     
     # Create function to report results
-    def hurst_results(x, rho):
-        
-        gen = calc_generalized_hurst_exp(x, q = 0.01)
-        tri = calc_triangle_hurst_exp(x)
-        fd = calc_fd_hurst_exp(x)
-    
-        gen_ks = calc_generalized_hurst_exp(x, q = 0.01, ks = True)
-        tri_ks = calc_triangle_hurst_exp(x, ks = True)
-        fd_ks = calc_fd_hurst_exp(x, ks = True)
-        
-        return rho, gen, tri, fd, gen_ks, tri_ks, fd_ks
-        
-    saved_results = pd.DataFrame()   
-    
-    N = 252 
-    
-    for i, rho in enumerate(np.linspace(-1, 1, 500)):
+    def hurst_results(rho, sigma, n_obs, price = False):
         
         # Shocks are Student's t-distribution so more like market returns
-        x = 0.005 * np.random.standard_t(4.5, size = N + 1)
+        x = sigma * np.random.standard_t(4.5, size = n_obs + 1)
         
-        for j in range(1, N + 1):
+        for j in range(1, n_obs + 1):
                 
             x[j] += rho * x[j - 1] 
         
         # Drop the one with no autocorrelation
         x = x[1:]
         
-        # Save generated values        
-        saved_results.loc[i, 'rho'] = rho
-        saved_results.loc[i, [str(i) for i in range(N)]] = x    
-    
-    # Create function to vectorize process    
-    def get_results(i):
+        if price:
+            
+            x = 50 * np.exp(np.cumsum(x))
         
-        global saved_results
+        gen = calc_generalized_hurst_exp(x, q = 0.01, is_price = price)
+        tri = calc_triangle_hurst_exp(x, is_price = price)
+        fd = calc_fd_hurst_exp(x, is_price = price)
     
-        x = saved_results.loc[i, [str(i) for i in range(N)]].values.flatten()
-            
-        rho = saved_results.loc[i, 'rho']
-            
-        return hurst_results(x, rho)
-   
-    # Vectorizing
-    get_results = np.vectorize(get_results)
+        gen_ks = calc_generalized_hurst_exp(x, q = 0.01, ks = True, is_price = price)
+        tri_ks = calc_triangle_hurst_exp(x, ks = True, is_price = price)
+        fd_ks = calc_fd_hurst_exp(x, ks = True, is_price = price)
+        
+        return rho, gen, tri, fd, gen_ks, tri_ks, fd_ks
     
-    # Compute the results
-    results = pd.DataFrame(np.array(get_results(np.array(saved_results.index))).T)
+    # Vectorize function
+    hurst_results = np.vectorize(hurst_results)
+    
+    # Define n_obs
+    n_obs = 252
+      
+    # Perform multithreading since slow
+    results = pd.DataFrame(np.array(hurst_results(rho = np.linspace(-1, 1, 500),
+                                                  sigma = 0.005, n_obs = n_obs)).T)
     
     # Rename columns
     results.columns = ['rho', 'gen', 'tri', 'fd', 'gen_ks', 'tri_ks', 'fd_ks']
@@ -277,7 +266,7 @@ if __name__ == '__main__':
         ax[nrow, ncol].set_xlabel('rho')
         ax[nrow, ncol].set_ylabel('Hurst Exponent')
     
-    fig.suptitle(f'N = {N}')
+    fig.suptitle(f'N = {n_obs}')
     
     plt.show()
     
