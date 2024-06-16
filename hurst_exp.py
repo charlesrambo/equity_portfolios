@@ -215,7 +215,7 @@ if __name__ == '__main__':
         
         for j in range(1, n_obs + 1):
                 
-            x[j] += rho * x[j - 1] 
+            x[j] = rho * x[j - 1] + np.sqrt(1 - rho**2) * x[j]
         
         # Drop the one with no autocorrelation
         x = x[1:]
