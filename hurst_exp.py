@@ -12,7 +12,6 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 from scipy.optimize import fmin
 from scipy.stats import ks_2samp
-import warnings
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +27,15 @@ def prep_x(x, is_price):
     
     return y
 
+def truncate_H(H):
+    
+    if H > 1.5:        
+        return 1.5   
+    elif H < -1.5:       
+        return -1.5    
+    else:        
+        return H
+
 
 # ---------------------------------------------------------------------------
 # Define KS-statistic function
@@ -38,25 +46,27 @@ def ks_stat(y, q, H, tau, sigma, dist_fun):
         
     return ks_stat
 
+
+def obj(H, y, q, tau_vals, sigma_vals, dist_fun):
+        
+    return np.nansum([ks_stat(y, q, H, tau, sigma, dist_fun).statistic 
+                                   for tau in tau_vals for sigma in sigma_vals])
     
-def ks_test(y, dist_fun, q = 1, sigma_vals = [1, 3]):
+   
+def match_dist(y, dist_fun, q = 1):
     
     # Get N
     N = len(y)
     
-    if N < 120:
-        
-        warnings.warn(f'The KS-method is ineffective for N less than 120. Got N = {N}.')
-    
     # Sample more values for small tau
-    tau_vals = np.array([int(2**i) for i in range(int(np.log2(N)) - 2)])
-       
-    # Define objective function; needs to be within local scope
-    obj = lambda H: np.nansum([ks_stat(y, q, H, tau, sigma, dist_fun).statistic 
-                               for tau in tau_vals for sigma in sigma_vals])
+    tau_vals = np.array([int(2**i) for i in range(1, int(np.log2(N)) - 2)])
+    
+    # sigma_vals one less than tau_vals
+    sigma_vals = tau_vals - 1
     
     # Minimize obj using simplex method 
-    H = fmin(obj, x0 = 0.5, disp = False)[0]
+    H = fmin(obj, x0 = 0.5, disp = False, 
+             args = (y, q, tau_vals, sigma_vals, dist_fun))[0]
     
     return H
 
@@ -70,14 +80,18 @@ def get_log_reg_coef(tau_vals, mean_vals):
     return reg.coef_[0] 
 
 
-def calc_self_similar(y, H, dist_fun, q = 1, sigma_vals = [1, 3]):
+def calc_self_similar(y, H, dist_fun, q = 1):
     
     N = len(y)
     
-    tau_vals = [int(2**i) for i in range(0, int(np.log2(N)) - 2)]
+    # Sample more values for small tau
+    tau_vals = np.array([int(2**i) for i in range(1, int(np.log2(N)) - 2)])
     
+    # sigma_vals one less than tau_vals
+    sigma_vals = tau_vals - 1
+     
     p = np.mean([ks_stat(y, q, H, tau, sigma, dist_fun).pvalue 
-                 for tau in tau_vals for sigma in sigma_vals])
+                     for tau in tau_vals for sigma in sigma_vals])   
     
     return p  
 
@@ -88,14 +102,13 @@ def calc_sum(x, tau, q = 1):
     return np.abs(x[tau:] - x[:-tau])**q
         
 
-def calc_generalized_hurst_exp(x, q = 1, is_price = False, ks = False, 
-                               sigma_vals = [1, 3]):
+def calc_generalized_hurst_exp(x, q = 1, is_price = False, dist = False):
         
     y = prep_x(x, is_price = is_price)
      
-    if ks:
+    if dist:
         
-        H = ks_test(y, calc_sum, q = q, sigma_vals = sigma_vals)
+        H = match_dist(y, calc_sum, q = q)
         
     else:
         
@@ -107,7 +120,7 @@ def calc_generalized_hurst_exp(x, q = 1, is_price = False, ks = False,
         
         H = get_log_reg_coef(tau_vals, mean_vals)/q 
     
-    return H
+    return truncate_H(H)
 
 
 # ---------------------------------------------------------------------------  
@@ -116,14 +129,13 @@ def calc_area(y, tau, q = 1):
     return tau/2 * np.abs(y[2*tau:] - 2 * y[tau:-tau] + y[:-2*tau])**q
 
 
-def calc_triangle_hurst_exp(x, is_price = False, q = 1, ks = False, 
-                            sigma_vals = [1, 3]):
+def calc_triangle_hurst_exp(x, is_price = False, q = 1, dist = False):
     
     y = prep_x(x, is_price = is_price)
          
-    if ks:
+    if dist:
     
-        c = ks_test(y, calc_area, q = q, sigma_vals = sigma_vals)
+        c = match_dist(y, calc_area, q = q)
         
     else:
         
@@ -135,46 +147,43 @@ def calc_triangle_hurst_exp(x, is_price = False, q = 1, ks = False,
         
         c = get_log_reg_coef(tau_vals, area)/q  
     
-    return c - 1
+    return truncate_H(c - 1)
 
 
 # ---------------------------------------------------------------------------  
 def calc_m(y, tau, q):
     
-    series = pd.Series(y)
+    N = len(y)
     
-    f = lambda a: np.max(a - a.iloc[0]) - np.min(a - a.iloc[0])
+    z = np.array([np.max(y[i:i + tau + 1]) - np.min(y[i:i + tau + 1]) 
+                  for i in range(N - tau - 1)])
     
-    series = (series.rolling(window = tau + 1).apply(f))**q
-    
-    return series.dropna().values
+    return z**q
 
 
-def calc_fd_hurst_exp(x, q = 0.01, is_price = False, ks = False, 
-                      sigma_vals = [1, 3]):
+def calc_fd_hurst_exp(x, q = 0.01, is_price = False, dist = False):
     
     y = prep_x(x, is_price = is_price)
      
-    if ks:
+    if dist:
         
-        H = ks_test(y, calc_m, q = q, sigma_vals = sigma_vals)
+        H = match_dist(y, calc_m, q = q)
         
     else:
         
         N = len(y)
            
-        tau_vals = np.arange(1, N)
+        tau_vals = np.arange(1, N - 1)
         
         m_vals = np.array([np.mean(calc_m(y, tau, q)) for tau in tau_vals])
         
         H = get_log_reg_coef(tau_vals, m_vals)/q 
     
-    return H
+    return truncate_H(H)
 
 
 # Seems to match ellx128 discription in Testing the Algorithms but not formula for FD 
-def calc_fd_hl_hurst_exp(x_h, x_l, q = 0.01, is_price = False, ks = False, 
-                      sigma_vals = [1, 3]):
+def calc_fd_hl_hurst_exp(x_h, x_l, q = 0.01, is_price = False, dist = False):
     
     y_h = prep_x(x_h, is_price = is_price)
     y_l = prep_x(x_l, is_price = is_price) 
@@ -182,9 +191,9 @@ def calc_fd_hl_hurst_exp(x_h, x_l, q = 0.01, is_price = False, ks = False,
     # Calculate difference
     y = y_h - y_l
      
-    if ks:
+    if dist:
         
-        H = ks_test(y, calc_sum, q = q, sigma_vals = sigma_vals)
+        H = match_dist(y, calc_sum, q = q)
         
     else:
         
@@ -196,7 +205,37 @@ def calc_fd_hl_hurst_exp(x_h, x_l, q = 0.01, is_price = False, ks = False,
         
         H = get_log_reg_coef(tau_vals, mean_vals)/q 
     
-    return H
+    return truncate_H(H)
+
+
+# ---------------------------------------------------------------------------  
+# Create function to report results
+def hurst_results(rho, sigma, n_obs, price = False):
+    
+    # Shocks are Student's t-distribution so more like market returns
+    x = sigma * np.random.standard_t(4.5, size = n_obs + 1)
+    
+    for j in range(1, n_obs + 1):
+         
+        # Need to add a little extra random noise else problems taking logs
+        x[j] = rho * x[j - 1] + np.sqrt(1 - rho**2 + 1e-5) * x[j]
+        
+    # Drop the one with no autocorrelation
+    x = x[1:]
+    
+    if price:
+        
+        x = 50 * np.exp(np.cumsum(x))
+    
+    gen = calc_generalized_hurst_exp(x, q = 0.01, is_price = price)
+    tri = calc_triangle_hurst_exp(x, is_price = price)
+    fd = calc_fd_hurst_exp(x, is_price = price, q = 1)
+
+    gen_ks = calc_generalized_hurst_exp(x, q = 0.01, dist = True, is_price = price)
+    tri_ks = calc_triangle_hurst_exp(x, dist = True, is_price = price)
+    fd_ks = calc_fd_hurst_exp(x, dist = True, is_price = price)
+    
+    return rho, gen, tri, fd, gen_ks, tri_ks, fd_ks
 
 
 
@@ -204,46 +243,29 @@ if __name__ == '__main__':
     
     import matplotlib.pyplot as plt
     import time   
+    import lopez_de_prado as lopez
     
     start_time = time.perf_counter()
      
-    # Create function to report results
-    def hurst_results(rho, sigma, n_obs, price = False):
-        
-        # Shocks are Student's t-distribution so more like market returns
-        x = sigma * np.random.standard_t(4.5, size = n_obs + 1)
-        
-        for j in range(1, n_obs + 1):
-                
-            x[j] = rho * x[j - 1] + np.sqrt(1 - rho**2) * x[j]
-        
-        # Drop the one with no autocorrelation
-        x = x[1:]
-        
-        if price:
-            
-            x = 50 * np.exp(np.cumsum(x))
-        
-        gen = calc_generalized_hurst_exp(x, q = 0.01, is_price = price)
-        tri = calc_triangle_hurst_exp(x, is_price = price)
-        fd = calc_fd_hurst_exp(x, is_price = price)
-    
-        gen_ks = calc_generalized_hurst_exp(x, q = 0.01, ks = True, is_price = price)
-        tri_ks = calc_triangle_hurst_exp(x, ks = True, is_price = price)
-        fd_ks = calc_fd_hurst_exp(x, ks = True, is_price = price)
-        
-        return rho, gen, tri, fd, gen_ks, tri_ks, fd_ks
-    
-    # Vectorize function
-    hurst_results = np.vectorize(hurst_results)
+    # Initialize data frame to hold results
+    results = pd.DataFrame(np.linspace(-1, 1, 1000).reshape(-1, 1), 
+                           columns = ['rho'])
     
     # Define n_obs
-    n_obs = 252
-      
-    # Perform multithreading since slow
-    results = pd.DataFrame(np.array(hurst_results(rho = np.linspace(-1, 1, 500),
-                                                  sigma = 0.005, n_obs = n_obs)).T)
+    n_obs = 126
     
+    # Run multithreading
+    results = lopez.run_queued_multiprocessing(hurst_results, 
+                                                results.index, 
+                                                params_dict = {'rho':results['rho']}, 
+                                                num_threads = 6, 
+                                                mp_batches = 10, 
+                                                linear_molecules = False, 
+                                                prep_func = True, 
+                                                verbose = True, 
+                                                sigma = 0.005,
+                                                n_obs = n_obs)
+      
     # Rename columns
     results.columns = ['rho', 'gen', 'tri', 'fd', 'gen_ks', 'tri_ks', 'fd_ks']
     
@@ -271,3 +293,4 @@ if __name__ == '__main__':
     plt.show()
     
     print(f'{(time.perf_counter() - start_time)/60 : .2f} minutes')
+    
