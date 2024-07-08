@@ -217,8 +217,7 @@ def hurst_results(rho, sigma, n_obs, price = False):
     
     for j in range(1, n_obs + 1):
          
-        # Need to add a little extra random noise else problems taking logs
-        x[j] = rho * x[j - 1] + np.sqrt(1 - rho**2 + 1e-5) * x[j]
+        x[j] = rho * x[j - 1] + np.sqrt(1 - rho**2) * x[j]
         
     # Drop the one with no autocorrelation
     x = x[1:]
@@ -248,7 +247,7 @@ if __name__ == '__main__':
     start_time = time.perf_counter()
      
     # Initialize data frame to hold results
-    results = pd.DataFrame(np.linspace(-1, 1, 1000).reshape(-1, 1), 
+    results = pd.DataFrame(np.linspace(-0.9999, 1, 1000, endpoint = False).reshape(-1, 1), 
                            columns = ['rho'])
     
     # Define n_obs
