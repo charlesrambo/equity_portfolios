@@ -59,8 +59,7 @@ def match_dist(y, dist_fun, q = 1):
     N = len(y)
     
     # Sample more values for small tau
-    tau_vals = np.logspace(1, int(np.log2(N)) - 2, int(np.log2(N)) - 2, 
-                           base = 2)
+    tau_vals = 2**np.arange(1, np.log2(N) - 1).astype(int)
     
     # sigma_vals one less than tau_vals
     sigma_vals = tau_vals - 1
@@ -86,8 +85,7 @@ def calc_self_similar(y, H, dist_fun, q = 1):
     N = len(y)
     
     # Sample more values for small tau
-    tau_vals = np.logspace(1, int(np.log2(N)) - 2, int(np.log2(N)) - 2, 
-                           base = 2)
+    tau_vals = 2**np.arange(1, np.log2(N) - 1).astype(int)
     
     # sigma_vals one less than tau_vals
     sigma_vals = tau_vals - 1
